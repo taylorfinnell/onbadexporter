@@ -354,7 +354,7 @@ def flatten_array(arr):
 
 def collect_all_bones(node):
     bones = []
-    if rt.isValidNode(node) and ("BN" in node.name):
+    if rt.isValidNode(node) and ("BN" in node.name or "bn" in node.name):
         bones.append(node)
         for child in node.children:
             bones.append(collect_all_bones(child))
