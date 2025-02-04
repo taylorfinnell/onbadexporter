@@ -353,16 +353,6 @@ class BadFile:
 
 # --- Helpers and Export Functions ---
 
-@contextmanager
-def set_ref_coordsys(cs_new):
-    # Switch coordinate system (using a special mxs %coordsys_context)
-    coordsys = getattr(rt, "%coordsys_context")
-    prev_cs = coordsys(rt.Name(cs_new), None)
-    try:
-        yield
-    finally:
-        coordsys(prev_cs, None)
-
 
 def flatten_array(arr):
     result = []
@@ -384,14 +374,12 @@ def collect_all_bones(node):
 
 
 def extract_bone_data(bone_node) -> Bone:
-    # Transform from local space (note: coordinate system transform)
-    with set_ref_coordsys("local"):
-        rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
-        cs = rt.matrix3(rt.point3(1, 0, 0),
-                        rt.point3(0, 1, 0),
-                        rt.point3(0, 0, 1),
-                        bone_node.transform.position)
-        result = rot_mat * cs
+    rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
+    cs = rt.matrix3(rt.point3(1, 0, 0),
+                    rt.point3(0, 1, 0),
+                    rt.point3(0, 0, 1),
+                    bone_node.transform.position)
+    result = rot_mat * cs
 
     if bone_node.parent is not None:
         local_tm = bone_node.transform * rt.inverse(bone_node.parent.transform)
@@ -429,13 +417,12 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
         for f in range(num_frames):
             cf = start_frame + f
             with pymxs.attime(cf):
-                with set_ref_coordsys("local"):
-                    rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
-                    cs = rt.matrix3(rt.point3(1, 0, 0),
-                                    rt.point3(0, 1, 0),
-                                    rt.point3(0, 0, 1),
-                                    bone_node.transform.position)
-                    result = rot_mat * cs
+                rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
+                cs = rt.matrix3(rt.point3(1, 0, 0),
+                                rt.point3(0, 1, 0),
+                                rt.point3(0, 0, 1),
+                                bone_node.transform.position)
+                result = rot_mat * cs
                 rot_quat = rt.MyUtilsInstance.ConvertMxsType(rt.inverse(max_mat) * result * rt.inverse(correction), rt.quat)
                 rot_quat = rt.inverse(rot_quat)
                 rotations.append((rot_quat.x, rot_quat.y, rot_quat.z, rot_quat.w))
@@ -468,7 +455,7 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
 
 def export_bad():
     filename = rt.OpenNovaRoll.et_outputPath.text
-    root_bone = rt.getNodeByName("BN01 Pelvis")
+    root_bone = rt.getNodeByName("BN01")
     if root_bone is None:
         print("No root bone 'BN01' found.")
         return
