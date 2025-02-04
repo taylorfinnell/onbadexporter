@@ -374,10 +374,15 @@ def extract_bone_data(bone_node):
         local_tm = bone_node.transform * rt.inverse(bone_node.parent.transform)
     else:
         local_tm = bone_node.transform
-
+        
+    start_point = bone_node.transform.position
+    end_point = start_point + bone_node.transform.row3 * bone_node.length
+    bone_length = rt.distance(start_point, end_point)
+    pos = local_tm.position
     pos = rt.point3(local_tm.position.x, local_tm.position.y, local_tm.position.z)
+    
     bone = Bone(name=bone_node.name[:31],
-                BoneLength=0.0,
+                BoneLength=bone_length,
                 Position=pos,
                 Transform=rot_mat)
     bone.NumChildren = len(bone_node.children)
