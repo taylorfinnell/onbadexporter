@@ -221,14 +221,12 @@ class Bone:
 
 @dataclass
 class FrameTableEntry:
-    NumFrames: int = 0
-    Padding: int = 0
+    NumKeys: int = 0
     frame_length_ptr: int = 0
     quat_ptr: int = 0
 
     def write(self, w: BinaryWriter):
-        w.write_uint16(self.NumFrames)
-        w.write_uint16(self.Padding)
+        w.write_int32(self.NumKeys)
         w.write_int32(self.frame_length_ptr)
         w.write_int32(self.quat_ptr)
 
@@ -272,18 +270,28 @@ class BadFile:
             self.channels.append(Channel())
 
     def write(self, filename: str):
-        # Prepare header
+        # 1) Prepare the bone offsets before writing any bone data
         self.header.NumBones = len(self.bones)
         for i, b in enumerate(self.bones):
             b.BoneNum = i
             b.NumChildren = len(b.children)
 
+        # -- Set up parent/child offsets *now*, so that
+        # they are correct in each Bone structure before writing:
+        # (We know where the bone array will start, so we can do the math)
+        # But we don’t yet know the actual 'bone_offset' (the file position),
+        # so we will do it just after we compute 'bone_offset' below.
+        # That way we only have to write the bones once.
+
         w = BinaryWriter()
-        # Reserve header space
+        # 2) Reserve space for the header
         w.write_bytes(b"\x00" * self.header.HeaderLen)
+
+        # 3) Reserve space for Frame Table Entries
         frame_table_offset = len(w.data)
         w.write_bytes(b"\x00" * (FRAME_TABLE_ENTRY_SIZE * self.header.NumBones))
 
+        # 4) Write out the per-bone channels: (frame_lengths, quaternions)
         bone_framelength_ptrs = []
         bone_quat_ptrs = []
         for ch in self.channels:
@@ -299,56 +307,67 @@ class BadFile:
             bone_framelength_ptrs.append(fl_ptr)
             bone_quat_ptrs.append(quat_ptr)
 
+        # 5) (Optional) Write offset blocks if self.header.NumOffsets > 0
         rootOffsetsOffset = 0
         if self.header.NumOffsets > 0 and self.offsets:
             rootOffsetsOffset = len(w.data)
             for off in self.offsets:
                 off.write(w)
 
+        # 6) Now we know the position where bone data will start
         bone_offset = len(w.data)
+
+        # We can fill in each bone’s ParentOffset/ChildOffset,
+        # because we know each bone is 100 bytes, so:
+        for i, b in enumerate(self.bones):
+            if b.parent:
+                b.ParentOffset = bone_offset + self.bones.index(b.parent) * BONE_SIZE
+            else:
+                b.ParentOffset = -1
+            if b.children:
+                b.ChildOffset = bone_offset + self.bones.index(b.children[0]) * BONE_SIZE
+            else:
+                b.ChildOffset = -1
+
+        # 7) Write the bones (each exactly 100 bytes)
         for b in self.bones:
             b.write(w)
 
+        # 8) If translation is on, write the contiguous block of translations
+        #    (NumFrames × NumBones × 3 floats)
         if self.header.AnimationFlags & ANIM_FLAG_TRANSLATION:
-            for f in range(self.header.NumFrames):  # frame-major
+            for f in range(self.header.NumFrames + 1):
                 for i in range(self.header.NumBones):
                     tx, ty, tz = self.channels[i].translations[f]
                     w.write_float(tx)
                     w.write_float(ty)
                     w.write_float(tz)
 
-        # Fix up bone parent/child offsets
-        for i, b in enumerate(self.bones):
-            if b.parent:
-                b.ParentOffset = bone_offset + self.bones.index(b.parent) * BONE_SIZE
-            else:
-                b.ParentOffset = 0
-            if b.children:
-                b.ChildOffset = bone_offset + self.bones.index(b.children[0]) * BONE_SIZE
-            else:
-                b.ChildOffset = 0
-            start = bone_offset + i * BONE_SIZE
-            subw = BinaryWriter()
-            b.write(subw)
-            w.data[start:start + BONE_SIZE] = subw.data
-
+        # 9) Now fix up the FrameTableEntry blocks to reflect the correct pointers
         for i, ch in enumerate(self.channels):
-            fte = FrameTableEntry(self.header.NumFrames, 0, bone_framelength_ptrs[i], bone_quat_ptrs[i])
+            num_keys = len(ch.frame_lengths)
+            fte = FrameTableEntry(num_keys,
+                                  bone_framelength_ptrs[i],
+                                  bone_quat_ptrs[i])
             start = frame_table_offset + i * FRAME_TABLE_ENTRY_SIZE
             subw = BinaryWriter()
             fte.write(subw)
             w.data[start:start + FRAME_TABLE_ENTRY_SIZE] = subw.data
 
+        # 10) Now finalize the header fields
         self.header.BoneOffset = bone_offset
         self.header.FrameDataOffset = frame_table_offset
         self.header.rootOffsetsOffset = rootOffsetsOffset
 
+        # Write the actual header into the first 80 bytes
         hw = BinaryWriter()
         self.header.write(hw)
         w.data[0:self.header.HeaderLen] = hw.data
 
+        # 11) Save out the entire buffer
         with open(filename, "wb") as f:
             f.write(w.getvalue())
+
 
 
 # --- Helpers and Export Functions ---
@@ -392,6 +411,7 @@ def extract_bone_data(bone_node) -> Bone:
 
     pos = rt.point3(local_tm.position.x, local_tm.position.y, local_tm.position.z)
     bone_name = bone_node.name[:31]
+        
     if "BN01" in bone_name:
         pos = rt.point3(0, 0, 0)
 
@@ -416,7 +436,9 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
 
         for f in range(num_frames):
             cf = start_frame + f
+
             with pymxs.attime(cf):
+                
                 rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
                 cs = rt.matrix3(rt.point3(1, 0, 0),
                                 rt.point3(0, 1, 0),
@@ -426,26 +448,37 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
                 rot_quat = rt.MyUtilsInstance.ConvertMxsType(rt.inverse(max_mat) * result * rt.inverse(correction), rt.quat)
                 rot_quat = rt.inverse(rot_quat)
                 rotations.append((rot_quat.x, rot_quat.y, rot_quat.z, rot_quat.w))
-            with pymxs.attime(cf):
+            
                 if translated:
                     current_tm = bone_node.transform.position
-                    parent = bone_node.parent if bone_node.parent else bone_nodes[0]
+                    parent = bone_node.parent if bone_node.parent else bone_node#s[0]
+                    pos_in_parent = current_tm * rt.inverse(parent.transform)
                     ip = initial_pos * parent.transform
-                    diff_pos = (rt.point3(
-                        current_tm.x - ip.x,
-                        current_tm.y - ip.y,
-                        current_tm.z - ip.z
-                    )) * rt.inverse(correction)
-                    translations.append((diff_pos.x, diff_pos.y, diff_pos.z))
+                    dist = rt.distance(initial_pos, pos_in_parent)
+                
+                    if dist > 0.000001:
+                        diff_pos = (rt.point3(
+                            current_tm.x - ip.x,
+                            current_tm.y - ip.y,
+                            current_tm.z - ip.z
+                        )) * rt.inverse(correction)
+            
+                        translations.append((diff_pos.x, diff_pos.y, diff_pos.z))
+                    else:
+                        translations.append((0, 0, 0))
             if i == 0:
-                with pymxs.attime(cf):
-                    curr = bone_node.transform.position
-                with pymxs.attime(cf + 1):
-                    nxt = bone_node.transform.position
-                vel = (nxt - curr) * rt.inverse(correction)
+                if cf != end_frame:
+                    with pymxs.attime(cf):
+                        curr = bone_node.transform.position
+                    with pymxs.attime(cf + 1):
+                        nxt = bone_node.transform.position
+                    vel = (nxt - curr) * rt.inverse(correction)
+                else:
+                    vel = temp_offsets[0].vel
+
                 # Root motion offsets (values are placeholders)
                 temp_offsets.append(OffsetEntryV1(vel, bottom=0, top=0, event=0))
-
+        
         ch = Channel(frame_lengths, rotations, translations if translated else None)
         bone_channels.append(ch)
 
@@ -455,20 +488,21 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
 
 def export_bad():
     filename = rt.OpenNovaRoll.et_outputPath.text
-    root_bone = rt.getNodeByName("BN01")
+    root_bone = rt.getNodeByName("BN01 root")
     if root_bone is None:
         print("No root bone 'BN01' found.")
         return
 
     all_bones = collect_all_bones(root_bone)
     all_bones.sort(key=lambda b: b.name)
-
+        
     start_frame = rt.OpenNovaRoll.spn_startFrame.value
     end_frame = rt.OpenNovaRoll.spn_endFrame.value
-    num_frames = end_frame - start_frame
+    
+    num_frames = end_frame - start_frame# + 1
     fps = rt.frameRate
-    dump_to_console = rt.OpenNovaRoll.chk_console.checked
 
+    
     flags = 0
     if rt.OpenNovaRoll.chk_looped.checked:
         flags |= ANIM_FLAG_LOOPED
@@ -506,13 +540,11 @@ def export_bad():
         initial_bones=bones_list
     )
     bad_file.channels = channels
-    bad_file.header.NumOffsets = num_frames
+    bad_file.header.NumOffsets = len(bad_file.offsets)
 
     bad_file.write(filename)
     print(f"Exported .bad file to {filename}")
 
-    if dump_to_console:
-        pass
 
 
 def show_opennova_ui():
