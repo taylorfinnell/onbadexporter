@@ -485,13 +485,34 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
     bad_file.offsets = temp_offsets
     return bone_channels
 
-
+def find_root_bones(nodes):
+    root_bones = []
+    for node in nodes:
+        if rt.isValidNode(node) and ("BN01" in node.name or "bn01" in node.name):
+            if (node.parent is None or 
+                not rt.isValidNode(node.parent) or 
+                not ("BN01" in node.parent.name or "bn01" in node.parent.name)):
+                root_bones.append(node)
+    return root_bones
+    
 def export_bad():
     filename = rt.OpenNovaRoll.et_outputPath.text
-    root_bone = rt.getNodeByName("BN01 root")
-    if root_bone is None:
-        print("No root bone 'BN01' found.")
+
+    all_nodes = rt.objects
+    root_bones = find_root_bones(all_nodes)
+    
+    if len(root_bones) == 0:
+        print("Error: No root bones found in the scene.")
         return
+    elif len(root_bones) > 1:
+        print("Error: Multiple root bones found in the scene:")
+        for bone in root_bones:
+            print(f"- {bone.name}")
+        print("Please ensure there is only one root bone.")
+        return
+        
+    root_bone = root_bones[0]
+    print(f"Using root bone: {root_bone.name}")
 
     all_bones = collect_all_bones(root_bone)
     all_bones.sort(key=lambda b: b.name)
@@ -499,10 +520,9 @@ def export_bad():
     start_frame = rt.OpenNovaRoll.spn_startFrame.value
     end_frame = rt.OpenNovaRoll.spn_endFrame.value
     
-    num_frames = end_frame - start_frame# + 1
+    num_frames = end_frame - start_frame
     fps = rt.frameRate
 
-    
     flags = 0
     if rt.OpenNovaRoll.chk_looped.checked:
         flags |= ANIM_FLAG_LOOPED
@@ -541,6 +561,9 @@ def export_bad():
     )
     bad_file.channels = channels
     bad_file.header.NumOffsets = len(bad_file.offsets)
+
+    bad_file.write(filename)
+    print(f"Exported .bad file to {filename}")
 
     bad_file.write(filename)
     print(f"Exported .bad file to {filename}")
