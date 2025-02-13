@@ -565,10 +565,6 @@ def export_bad():
     bad_file.write(filename)
     print(f"Exported .bad file to {filename}")
 
-    bad_file.write(filename)
-    print(f"Exported .bad file to {filename}")
-
-
 
 def show_opennova_ui():
     script_dir = os.path.dirname(os.path.abspath(__file__))
