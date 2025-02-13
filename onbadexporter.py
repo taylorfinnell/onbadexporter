@@ -539,7 +539,7 @@ def export_bad():
     bad_file.header.FPS = fps
     bad_file.header.AnimationFlags = flags
 
-    with pymxs.attime(start_frame):
+    with pymxs.attime(0):
         bones_list = []
         for i, bn in enumerate(all_bones):
             bone = extract_bone_data(bn)
