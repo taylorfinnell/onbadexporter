@@ -2,6 +2,8 @@
 
 A 3ds Max plugin for exporting Novalogic's animation format (.bad)
 
+An example animation exported with this plugin can be seen [here](https://i.imgur.com/q3N9Bxw.mp4)
+
 ## Credits
 
 Special thanks to the following contributors
