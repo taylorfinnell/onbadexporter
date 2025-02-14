@@ -38,4 +38,4 @@ can do the following
 
 **TODO:** Some weapon.def parameters may need adjustment for optimal appearance. There is an animation delay in the weapon.def that makes the switchto animation not properly display.
 
-**NOTE:** This particular rig only works with the stock model since it created by imported a .bad file. So it's ~NovaLogic's original rig. The has a hardcoded translation that only works on the stock model. Note that if you use your own rig you will need to export a fresh model of the ak47 to capture the bindpose of your setup.
+**NOTE:** This particular rig only works with the stock model since it was created by importing a .bad file. So it's ~NovaLogic's original rig. The game has a hardcoded translation that only works on the stock model. Note that if you use your own rig you will need to export a fresh model of the ak47 to capture the bindpose of your setup.
