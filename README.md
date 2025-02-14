@@ -10,7 +10,7 @@ Special thanks to the following contributors
 
 * DareHacker (DH)
 * Oscarmike247
-*  @mohammed_furqon
+* [@mohammed_furqon](https://www.fiverr.com/mohammed_furqon)
 
 ## Installation
 
