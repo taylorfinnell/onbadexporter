@@ -404,8 +404,13 @@ def find_root_bones(nodes):
     return root_bones
 
 
-def export_bad():
-    filename = rt.OpenNovaRoll.et_outputPath.text
+def export_bad(name, start_frame, end_frame, flags, output_path):
+    print("name", name)
+    print("start_frame", start_frame)
+    print("end_frame", end_frame)
+    print("flags", flags)
+    print("output_path", output_path)
+    filename = output_path
     all_nodes = rt.objects
     root_bones = find_root_bones(all_nodes)
 
@@ -425,19 +430,7 @@ def export_bad():
     all_bones = collect_all_bones(root_bone)
     all_bones.sort(key=lambda b: b.name)
 
-    start_frame = rt.OpenNovaRoll.spn_startFrame.value
-    end_frame = rt.OpenNovaRoll.spn_endFrame.value
     fps = rt.frameRate
-
-    flags = 0
-    if rt.OpenNovaRoll.chk_looped.checked:
-        flags |= ANIM_FLAG_LOOPED
-    if rt.OpenNovaRoll.chk_trans.checked:
-        flags |= ANIM_FLAG_TRANSLATION
-    if rt.OpenNovaRoll.chk_bit3.checked:
-        flags |= ANIM_FLAG_UNK1
-    if rt.OpenNovaRoll.chk_bit4.checked:
-        flags |= ANIM_FLAG_UNK2
 
     bad_file = BadFile()
     bad_file.header.NumBones = len(all_bones)
