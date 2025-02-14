@@ -1,6 +1,5 @@
 import os
 import struct
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -8,22 +7,22 @@ import pymxs
 from pymxs import runtime as rt
 
 # Animation flags
-ANIM_FLAG_NONE        = 0x00
-ANIM_FLAG_LOOPED      = 0x01
+ANIM_FLAG_NONE = 0x00
+ANIM_FLAG_LOOPED = 0x01
 ANIM_FLAG_TRANSLATION = 0x02
-ANIM_FLAG_UNK1        = 0x04
-ANIM_FLAG_UNK2        = 0x08
+ANIM_FLAG_UNK1 = 0x04
+ANIM_FLAG_UNK2 = 0x08
 
-# Constants for fixed record sizes
+# Fixed record sizes
 BONE_SIZE = 100
 FRAME_TABLE_ENTRY_SIZE = 12
 OFFSET_ENTRY_V1_SIZE = 24
 
 # Global matrices
 max_mat = rt.matrix3(
-    rt.point3(0, 0, 1),   # x-axis vector
-    rt.point3(0, 1, 0),   # y-axis vector
-    rt.point3(-1, 0, 0),  # z-axis vector
+    rt.point3(0, 0, 1),
+    rt.point3(0, 1, 0),
+    rt.point3(-1, 0, 0),
     rt.point3(0, 0, 0)
 )
 
@@ -34,8 +33,6 @@ correction = rt.Matrix3(
     rt.point3(0, 0, 0)
 )
 
-
-# --- Binary IO Helpers ---
 
 class BinaryWriter:
     def __init__(self):
@@ -63,70 +60,20 @@ class BinaryWriter:
         self.data += b
 
     def write_fixed_string(self, s: str, length: int):
-        enc = s.encode('ascii', 'ignore')[:length]
-        self.data += enc.ljust(length, b'\0')
+        enc = s.encode("ascii", "ignore")[:length]
+        self.data += enc.ljust(length, b"\0")
 
     def getvalue(self) -> bytes:
         return bytes(self.data)
 
 
-class BinaryReader:
-    def __init__(self, data: bytes):
-        self.data = data
-        self.pos = 0
-
-    def read_int32(self) -> int:
-        v = struct.unpack_from("<i", self.data, self.pos)[0]
-        self.pos += 4
-        return v
-
-    def read_uint32(self) -> int:
-        v = struct.unpack_from("<I", self.data, self.pos)[0]
-        self.pos += 4
-        return v
-
-    def read_int16(self) -> int:
-        v = struct.unpack_from("<h", self.data, self.pos)[0]
-        self.pos += 2
-        return v
-
-    def read_uint16(self) -> int:
-        v = struct.unpack_from("<H", self.data, self.pos)[0]
-        self.pos += 2
-        return v
-
-    def read_float(self) -> float:
-        v = struct.unpack_from("<f", self.data, self.pos)[0]
-        self.pos += 4
-        return v
-
-    def read_uint8(self) -> int:
-        v = self.data[self.pos]
-        self.pos += 1
-        return v
-
-    def read_bytes(self, length: int) -> bytes:
-        b = self.data[self.pos:self.pos+length]
-        self.pos += length
-        return b
-
-
 def matrix3_to_floats(m) -> Tuple[float, ...]:
-    return (m.row1.x, m.row1.y, m.row1.z,
-            m.row2.x, m.row2.y, m.row2.z,
-            m.row3.x, m.row3.y, m.row3.z)
-
-
-def floats_to_matrix3(floats: Tuple[float, ...]):
-    return rt.Matrix3(
-        rt.point3(floats[0], floats[1], floats[2]),
-        rt.point3(floats[3], floats[4], floats[5]),
-        rt.point3(floats[6], floats[7], floats[8]),
-        rt.point3(0, 0, 0)
+    return (
+        m.row1.x, m.row1.y, m.row1.z,
+        m.row2.x, m.row2.y, m.row2.z,
+        m.row3.x, m.row3.y, m.row3.z
     )
 
-
-# --- Data Classes with Serialization ---
 
 @dataclass
 class AnimationHeader:
@@ -221,14 +168,12 @@ class Bone:
 
 @dataclass
 class FrameTableEntry:
-    NumFrames: int = 0
-    Padding: int = 0
+    NumKeys: int = 0
     frame_length_ptr: int = 0
     quat_ptr: int = 0
 
     def write(self, w: BinaryWriter):
-        w.write_uint16(self.NumFrames)
-        w.write_uint16(self.Padding)
+        w.write_int32(self.NumKeys)
         w.write_int32(self.frame_length_ptr)
         w.write_int32(self.quat_ptr)
 
@@ -272,7 +217,6 @@ class BadFile:
             self.channels.append(Channel())
 
     def write(self, filename: str):
-        # Prepare header
         self.header.NumBones = len(self.bones)
         for i, b in enumerate(self.bones):
             b.BoneNum = i
@@ -281,6 +225,7 @@ class BadFile:
         w = BinaryWriter()
         # Reserve header space
         w.write_bytes(b"\x00" * self.header.HeaderLen)
+        # Reserve frame table entries space
         frame_table_offset = len(w.data)
         w.write_bytes(b"\x00" * (FRAME_TABLE_ENTRY_SIZE * self.header.NumBones))
 
@@ -307,33 +252,29 @@ class BadFile:
 
         bone_offset = len(w.data)
         for b in self.bones:
+            if b.parent:
+                b.ParentOffset = bone_offset + self.bones.index(b.parent) * BONE_SIZE
+            else:
+                b.ParentOffset = -1
+            if b.children:
+                b.ChildOffset = bone_offset + self.bones.index(b.children[0]) * BONE_SIZE
+            else:
+                b.ChildOffset = -1
+
+        for b in self.bones:
             b.write(w)
 
         if self.header.AnimationFlags & ANIM_FLAG_TRANSLATION:
-            for f in range(self.header.NumFrames):  # frame-major
+            for f in range(self.header.NumFrames + 1):
                 for i in range(self.header.NumBones):
                     tx, ty, tz = self.channels[i].translations[f]
                     w.write_float(tx)
                     w.write_float(ty)
                     w.write_float(tz)
 
-        # Fix up bone parent/child offsets
-        for i, b in enumerate(self.bones):
-            if b.parent:
-                b.ParentOffset = bone_offset + self.bones.index(b.parent) * BONE_SIZE
-            else:
-                b.ParentOffset = 0
-            if b.children:
-                b.ChildOffset = bone_offset + self.bones.index(b.children[0]) * BONE_SIZE
-            else:
-                b.ChildOffset = 0
-            start = bone_offset + i * BONE_SIZE
-            subw = BinaryWriter()
-            b.write(subw)
-            w.data[start:start + BONE_SIZE] = subw.data
-
         for i, ch in enumerate(self.channels):
-            fte = FrameTableEntry(self.header.NumFrames, 0, bone_framelength_ptrs[i], bone_quat_ptrs[i])
+            num_keys = len(ch.frame_lengths)
+            fte = FrameTableEntry(num_keys, bone_framelength_ptrs[i], bone_quat_ptrs[i])
             start = frame_table_offset + i * FRAME_TABLE_ENTRY_SIZE
             subw = BinaryWriter()
             fte.write(subw)
@@ -351,19 +292,6 @@ class BadFile:
             f.write(w.getvalue())
 
 
-# --- Helpers and Export Functions ---
-
-
-def flatten_array(arr):
-    result = []
-    for item in arr:
-        if isinstance(item, list):
-            result.extend(flatten_array(item))
-        else:
-            result.append(item)
-    return result
-
-
 def collect_all_bones(node):
     bones = []
     if rt.isValidNode(node) and ("BN" in node.name or "bn" in node.name):
@@ -375,10 +303,12 @@ def collect_all_bones(node):
 
 def extract_bone_data(bone_node) -> Bone:
     rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
-    cs = rt.matrix3(rt.point3(1, 0, 0),
-                    rt.point3(0, 1, 0),
-                    rt.point3(0, 0, 1),
-                    bone_node.transform.position)
+    cs = rt.matrix3(
+        rt.point3(1, 0, 0),
+        rt.point3(0, 1, 0),
+        rt.point3(0, 0, 1),
+        bone_node.transform.position
+    )
     result = rot_mat * cs
 
     if bone_node.parent is not None:
@@ -389,9 +319,9 @@ def extract_bone_data(bone_node) -> Bone:
     start_point = bone_node.transform.position
     end_point = start_point + bone_node.transform.row3 * bone_node.length
     bone_length = rt.distance(start_point, end_point)
-
     pos = rt.point3(local_tm.position.x, local_tm.position.y, local_tm.position.z)
     bone_name = bone_node.name[:31]
+
     if "BN01" in bone_name:
         pos = rt.point3(0, 0, 0)
 
@@ -418,32 +348,44 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
             cf = start_frame + f
             with pymxs.attime(cf):
                 rot_mat = rt.MyUtilsInstance.ConvertMxsType(bone_node.objecttransform.rotation, rt.Matrix3)
-                cs = rt.matrix3(rt.point3(1, 0, 0),
-                                rt.point3(0, 1, 0),
-                                rt.point3(0, 0, 1),
-                                bone_node.transform.position)
+                cs = rt.matrix3(
+                    rt.point3(1, 0, 0),
+                    rt.point3(0, 1, 0),
+                    rt.point3(0, 0, 1),
+                    bone_node.transform.position
+                )
                 result = rot_mat * cs
-                rot_quat = rt.MyUtilsInstance.ConvertMxsType(rt.inverse(max_mat) * result * rt.inverse(correction), rt.quat)
+                rot_quat = rt.MyUtilsInstance.ConvertMxsType(
+                    rt.inverse(max_mat) * result * rt.inverse(correction), rt.quat
+                )
                 rot_quat = rt.inverse(rot_quat)
                 rotations.append((rot_quat.x, rot_quat.y, rot_quat.z, rot_quat.w))
-            with pymxs.attime(cf):
+
                 if translated:
                     current_tm = bone_node.transform.position
-                    parent = bone_node.parent if bone_node.parent else bone_nodes[0]
+                    parent = bone_node.parent if bone_node.parent else bone_node
+                    pos_in_parent = current_tm * rt.inverse(parent.transform)
                     ip = initial_pos * parent.transform
-                    diff_pos = (rt.point3(
-                        current_tm.x - ip.x,
-                        current_tm.y - ip.y,
-                        current_tm.z - ip.z
-                    )) * rt.inverse(correction)
-                    translations.append((diff_pos.x, diff_pos.y, diff_pos.z))
+                    dist = rt.distance(initial_pos, pos_in_parent)
+                    if dist > 0.000001:
+                        diff_pos = (rt.point3(
+                            current_tm.x - ip.x,
+                            current_tm.y - ip.y,
+                            current_tm.z - ip.z
+                        )) * rt.inverse(correction)
+                        translations.append((diff_pos.x, diff_pos.y, diff_pos.z))
+                    else:
+                        translations.append((0, 0, 0))
+
             if i == 0:
-                with pymxs.attime(cf):
-                    curr = bone_node.transform.position
-                with pymxs.attime(cf + 1):
-                    nxt = bone_node.transform.position
-                vel = (nxt - curr) * rt.inverse(correction)
-                # Root motion offsets (values are placeholders)
+                if cf != end_frame:
+                    with pymxs.attime(cf):
+                        curr = bone_node.transform.position
+                    with pymxs.attime(cf + 1):
+                        nxt = bone_node.transform.position
+                    vel = (nxt - curr) * rt.inverse(correction)
+                else:
+                    vel = temp_offsets[0].vel
                 temp_offsets.append(OffsetEntryV1(vel, bottom=0, top=0, event=0))
 
         ch = Channel(frame_lengths, rotations, translations if translated else None)
@@ -453,39 +395,50 @@ def extract_animation_frames(bad_file, bone_nodes, start_frame, end_frame, fps, 
     return bone_channels
 
 
-def export_bad():
-    filename = rt.OpenNovaRoll.et_outputPath.text
-    root_bone = rt.getNodeByName("BN01")
-    if root_bone is None:
-        print("No root bone 'BN01' found.")
+def find_root_bones(nodes):
+    root_bones = []
+    for node in nodes:
+        if rt.isValidNode(node) and ("BN01" in node.name or "bn01" in node.name):
+            if node.parent is None or not rt.isValidNode(node.parent) or not ("BN01" in node.parent.name or "bn01" in node.parent.name):
+                root_bones.append(node)
+    return root_bones
+
+
+def export_bad(name, start_frame, end_frame, flags, output_path):
+    print("name", name)
+    print("start_frame", start_frame)
+    print("end_frame", end_frame)
+    print("flags", flags)
+    print("output_path", output_path)
+    filename = output_path
+    all_nodes = rt.objects
+    root_bones = find_root_bones(all_nodes)
+
+    if not root_bones:
+        print("Error: No root bones found in the scene.")
         return
+    if len(root_bones) > 1:
+        print("Error: Multiple root bones found in the scene:")
+        for bone in root_bones:
+            print(f"- {bone.name}")
+        print("Please ensure there is only one root bone.")
+        return
+
+    root_bone = root_bones[0]
+    print(f"Using root bone: {root_bone.name}")
 
     all_bones = collect_all_bones(root_bone)
     all_bones.sort(key=lambda b: b.name)
 
-    start_frame = rt.OpenNovaRoll.spn_startFrame.value
-    end_frame = rt.OpenNovaRoll.spn_endFrame.value
-    num_frames = end_frame - start_frame
     fps = rt.frameRate
-    dump_to_console = rt.OpenNovaRoll.chk_console.checked
-
-    flags = 0
-    if rt.OpenNovaRoll.chk_looped.checked:
-        flags |= ANIM_FLAG_LOOPED
-    if rt.OpenNovaRoll.chk_trans.checked:
-        flags |= ANIM_FLAG_TRANSLATION
-    if rt.OpenNovaRoll.chk_bit3.checked:
-        flags |= ANIM_FLAG_UNK1
-    if rt.OpenNovaRoll.chk_bit4.checked:
-        flags |= ANIM_FLAG_UNK2
 
     bad_file = BadFile()
     bad_file.header.NumBones = len(all_bones)
-    bad_file.header.NumFrames = num_frames
+    bad_file.header.NumFrames = end_frame - start_frame
     bad_file.header.FPS = fps
     bad_file.header.AnimationFlags = flags
 
-    with pymxs.attime(start_frame):
+    with pymxs.attime(0):
         bones_list = []
         for i, bn in enumerate(all_bones):
             bone = extract_bone_data(bn)
@@ -506,13 +459,10 @@ def export_bad():
         initial_bones=bones_list
     )
     bad_file.channels = channels
-    bad_file.header.NumOffsets = num_frames
+    bad_file.header.NumOffsets = len(bad_file.offsets)
 
     bad_file.write(filename)
     print(f"Exported .bad file to {filename}")
-
-    if dump_to_console:
-        pass
 
 
 def show_opennova_ui():
